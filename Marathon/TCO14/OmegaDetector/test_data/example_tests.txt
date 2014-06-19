@@ -1,0 +1,10 @@
+test_data/L00-001.bmp
+test_data/L00-007.bmp
+test_data/L04-076.bmp
+test_data/L09-151d.bmp
+test_data/L09-152a.bmp
+test_data/L11-133a.bmp
+test_data/L15-129d.bmp
+test_data/L16-139a.bmp
+test_data/L17-168.bmp
+test_data/L20-159.bmp
