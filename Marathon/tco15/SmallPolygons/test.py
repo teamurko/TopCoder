@@ -53,6 +53,7 @@ class Tester(object):
         args = shlex.split(cmd_line)
         res = subprocess.Popen(args, stdout=subprocess.PIPE)
         res.wait()
+        print res.stdout
         return StatResult.parse(self.tag, res.stdout)        
 
 
@@ -65,7 +66,7 @@ def main(tag, seed):
         num_tests = 100
         score = 0.0
         tester = Tester(tag=tag)
-        for seed in range(num_tests):
+        for seed in range(1, num_tests + 1):
             stat_res = tester.run(seed)
             print "Test {0}: {1}".format(seed, stat_res)
             score += stat_res.score

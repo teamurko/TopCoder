@@ -44,26 +44,16 @@ public class SmallPolygons {
     private List<Polygon> choosePolygonsImpl(Point[] points, int maxPolygons) {
         List<Polygon> res = new ArrayList<>();
         List<Point[]> groups = split(points, maxPolygons);
-        ConstructionStrategy strategy = improve ? ConstructionStrategy.SMART : ConstructionStrategy.STAR_SKEWED;
+        ConstructionStrategy strategy = improve ? ConstructionStrategy.IMPROVE_TWO : ConstructionStrategy.IMPROVE_ONE;
         res.addAll(groups.stream().map(group -> construct(group, strategy)).collect(Collectors.toList()));
         return res;
     }
 
     private List<Point[]> split(Point[] points, int maxGroups) {
-        double[][] dist = new double[points.length][points.length];
-        for (int i = 0; i < points.length; ++i) {
-            for (int j = i + 1; j < points.length; ++j) {
-                int iId = points[i].id;
-                int jId = points[j].id;
-                dist[iId][jId] = dist[jId][iId] = points[i].distanceTo(points[j]);
-            }
-        }
-        Polygon convexHull = Polygon.convexHull(points);
-        //TODO use better initial centers
-        maxGroups = Math.min(maxGroups, convexHull.vertices.length);
-        Point[] centers = choose(convexHull.vertices.clone(), maxGroups);
+        maxGroups = Math.min(maxGroups, points.length / 3);
+        Point[] centers = choose(points.clone(), maxGroups);
         boolean updated = true;
-        for (int iter = 0; iter < 100 && updated; ++iter) {
+        for (int iter = 0; iter < 200 && updated; ++iter) {
             List<Point>[] groups = distribute(points, centers);
             updated = false;
             for (int i = 0; i < maxGroups; ++i) {
@@ -77,14 +67,30 @@ public class SmallPolygons {
 
         List<Point> newCenters = new ArrayList<>();
         for (List<Point> group : distribute(points, centers)) {
-            if (group.size() > 3) {
+            if (group.size() > 2) {
                 newCenters.add(Utils.center(group));
             }
         }
         List<Point[]> res = new ArrayList<>();
         centers = new Point[newCenters.size()];
         newCenters.toArray(centers);
-        for (List<Point> group : distribute(points, centers)) {
+        List<Point>[] groups = distribute(points, centers);
+        maxGroups -= groups.length;
+        PriorityQueue<List<Point>> groupsBySize = new PriorityQueue<>((o1, o2) -> -o1.size() + o2.size());
+        for (List<Point> group : groups) {
+            groupsBySize.add(group);
+        }
+        while (maxGroups > 0 && groupsBySize.peek().size() >= 6) {
+            List<Point> group = groupsBySize.poll();
+            List<Point> first = new ArrayList<>();
+            List<Point> second = new ArrayList<>();
+            if (trySplit(group, first, second)) {
+                groupsBySize.add(first);
+                groupsBySize.add(second);
+            }
+            --maxGroups;
+        }
+        for (List<Point> group : groupsBySize) {
             Point[] pts = new Point[group.size()];
             group.toArray(pts);
             res.add(pts);
@@ -92,7 +98,23 @@ public class SmallPolygons {
         return res;
     }
 
-    private static List<Point>[] distribute(Point[] points, Point[] centers) {
+    static boolean trySplit(List<Point> group, List<Point> first, List<Point> second) {
+        Collections.sort(group, (o1, o2) -> {
+            int res = Utils.signum(o1.x - o2.x);
+            if (res != 0) return res;
+            return Utils.signum(o1.y - o2.y);
+        });
+        for (Point p : group) {
+            if (first.size() * 2 < group.size()) {
+                first.add(p);
+            } else {
+                second.add(p);
+            }
+        }
+        return first.size() >= 3 && second.size() >= 3;
+    }
+
+    static List<Point>[] distribute(Point[] points, Point[] centers) {
         List<Point>[] res = new ArrayList[centers.length];
         for (int i = 0; i < res.length; ++i) {
             res[i] = new ArrayList<>();
@@ -103,7 +125,7 @@ public class SmallPolygons {
         return res;
     }
 
-    private static Point[] choose(Point[] points, int numPoints) {
+    static Point[] choose(Point[] points, int numPoints) {
         Point[] res = new Point[numPoints];
         int ptr = 0;
         while (numPoints > 0) {
@@ -117,7 +139,7 @@ public class SmallPolygons {
         return res;
     }
 
-    private Polygon construct(Point[] points, ConstructionStrategy strategy) throws IllegalArgumentException {
+    Polygon construct(Point[] points, ConstructionStrategy strategy) throws IllegalArgumentException {
         Polygon convexHull = Polygon.convexHull(points);
         if (convexHull.square() < Utils.epsilon) {
             throw new IllegalArgumentException("Cannot construct 0 area polygon");
@@ -130,7 +152,7 @@ public class SmallPolygons {
         } else if (strategy == ConstructionStrategy.STAR_SKEWED) {
             Polygon bestPolygon = construct(points, ConstructionStrategy.STAR);
             double bestArea = bestPolygon.square();
-            for (Point candidate : convexHull.vertices) {
+            for (Point candidate : points) {
                 double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
                 Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
                 Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
@@ -143,7 +165,7 @@ public class SmallPolygons {
                 }
             }
             return bestPolygon;
-        } else if (strategy == ConstructionStrategy.SMART) {
+        } else if (strategy == ConstructionStrategy.IMPROVE_ONE) {
             Polygon bestPolygon = construct(points, ConstructionStrategy.STAR_SKEWED);
             double bestArea = bestPolygon.square();
             if (points.length < Utils.brute_force_limit) {
@@ -152,6 +174,11 @@ public class SmallPolygons {
                     bestPolygon = candidate;
                 }
             }
+            return bestPolygon;
+        } else if (strategy == ConstructionStrategy.IMPROVE_TWO) {
+            Polygon bestPolygon = construct(points, ConstructionStrategy.IMPROVE_ONE);
+            double bestArea = bestPolygon.square();
+            //TODO
             return bestPolygon;
         } else {
             return null;
@@ -238,7 +265,8 @@ public class SmallPolygons {
 enum ConstructionStrategy {
     STAR,
     STAR_SKEWED,
-    SMART
+    IMPROVE_ONE,
+    IMPROVE_TWO
 }
 
 class TestData {
