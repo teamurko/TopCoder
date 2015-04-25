@@ -30,6 +30,7 @@ class StatResult(object):
     def parse(tag, fd):
         values = []
         for line in fd.readlines():
+            print line
             words = line.split("=")
             if len(words) == 1:
                 values.append(try_get_int_or_float(words[0]))
