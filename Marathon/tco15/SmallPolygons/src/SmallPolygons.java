@@ -1,4 +1,3 @@
-
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -40,7 +39,8 @@ public class SmallPolygons {
     private List<Polygon> choosePolygonsImpl(Point[] points, int maxPolygons) {
         List<Polygon> res = new ArrayList<>();
         List<Point[]> groups = split(points, maxPolygons);
-        res.addAll(groups.stream().map(group -> construct(group, ConstructionStrategy.STAR)).collect(Collectors.toList()));
+        ConstructionStrategy strategy = improve ? ConstructionStrategy.STAR_SKEWED : ConstructionStrategy.STAR;
+        res.addAll(groups.stream().map(group -> construct(group, strategy)).collect(Collectors.toList()));
         return res;
     }
 
@@ -123,7 +123,21 @@ public class SmallPolygons {
             Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
             return new Polygon(shiftedPoints);
         } else if (strategy == ConstructionStrategy.STAR_SKEWED) {
-            return null;
+            Polygon bestPolygon = null;
+            double bestArea = 1e10;
+            for (Point candidate : convexHull.vertices) {
+                double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
+                Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
+                Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
+                Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
+                Polygon candidatePolygon = new Polygon(shiftedPoints);
+                double area = candidatePolygon.square();
+                if (area < bestArea) {
+                    bestArea = area;
+                    bestPolygon = candidatePolygon;
+                }
+            }
+            return bestPolygon;
         } else {
             return null;
         }
@@ -144,9 +158,9 @@ public class SmallPolygons {
     }
 
     public static void main(String[] args) {
+        boolean improve = args.length > 0 && "improve".equals(args[0]);
+        boolean generate = args.length > 1 && "generate".equals(args[1]);
         Scanner in = new Scanner(System.in);
-        boolean generate = args.length > 0 && "generate".equals(args[0]);
-        boolean improve = args.length > 1 && "improve".equals(args[1]);
         TestData testData = readData(generate, in);
         SmallPolygons solver = new SmallPolygons(improve);
         String[] serializedPolygons = solver.choosePolygons(testData.coordinates, testData.maxPolygons);
