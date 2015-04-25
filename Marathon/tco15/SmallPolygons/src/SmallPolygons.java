@@ -13,6 +13,8 @@ import java.util.stream.Collectors;
 
 public class SmallPolygons {
     final boolean improve;
+    Polygon bruteForceBestPolygon;
+    double bruteForceBestPolygonArea;
 
     public SmallPolygons() {
         this(true);
@@ -42,7 +44,7 @@ public class SmallPolygons {
     private List<Polygon> choosePolygonsImpl(Point[] points, int maxPolygons) {
         List<Polygon> res = new ArrayList<>();
         List<Point[]> groups = split(points, maxPolygons);
-        ConstructionStrategy strategy = improve ? ConstructionStrategy.STAR_SKEWED : ConstructionStrategy.STAR;
+        ConstructionStrategy strategy = improve ? ConstructionStrategy.SMART : ConstructionStrategy.STAR_SKEWED;
         res.addAll(groups.stream().map(group -> construct(group, strategy)).collect(Collectors.toList()));
         return res;
     }
@@ -126,8 +128,8 @@ public class SmallPolygons {
             Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
             return new Polygon(shiftedPoints);
         } else if (strategy == ConstructionStrategy.STAR_SKEWED) {
-            Polygon bestPolygon = null;
-            double bestArea = 1e10;
+            Polygon bestPolygon = construct(points, ConstructionStrategy.STAR);
+            double bestArea = bestPolygon.square();
             for (Point candidate : convexHull.vertices) {
                 double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
                 Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
@@ -141,8 +143,66 @@ public class SmallPolygons {
                 }
             }
             return bestPolygon;
+        } else if (strategy == ConstructionStrategy.SMART) {
+            Polygon bestPolygon = construct(points, ConstructionStrategy.STAR_SKEWED);
+            double bestArea = bestPolygon.square();
+            if (points.length < Utils.brute_force_limit) {
+                Polygon candidate = bruteForce(points);
+                if (candidate != null && bestArea > candidate.square()) {
+                    bestPolygon = candidate;
+                }
+            }
+            return bestPolygon;
         } else {
             return null;
+        }
+    }
+
+    Polygon bruteForce(Point[] points) {
+        Point[] res = new Point[points.length];
+        res[0] = points[0];
+        bruteForceBestPolygon = null;
+        bruteForceBestPolygonArea = Utils.infinity;
+        boolean[] taken = new boolean[points.length];
+        taken[0] = true;
+        bruteForceRec(res, 1, points, taken);
+        return bruteForceBestPolygon;
+    }
+
+    void bruteForceRec(Point[] res, int i, Point[] points, boolean[] taken) {
+        if (i == res.length) {
+            boolean ok = true;
+            for (int k = 1; k < i; ++k) {
+                if (Utils.intersect(res[k - 1], res[k], res[i - 1], res[0])) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (!ok) return;
+            Polygon candidate = new Polygon(res);
+            double area = candidate.square();
+            if (area < bruteForceBestPolygonArea) {
+                bruteForceBestPolygonArea = area;
+                bruteForceBestPolygon = candidate;
+            }
+            return;
+        }
+        for (int j = 0; j < points.length; ++j) {
+            if (!taken[j]) {
+                boolean ok = true;
+                for (int k = 1; k < i; ++k) {
+                    if (Utils.intersect(res[k - 1], res[k], res[i - 1], points[j])) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    taken[j] = true;
+                    res[i] = points[j];
+                    bruteForceRec(res, i + 1, points, taken);
+                    taken[j] = false;
+                }
+            }
         }
     }
 
@@ -177,7 +237,8 @@ public class SmallPolygons {
 
 enum ConstructionStrategy {
     STAR,
-    STAR_SKEWED
+    STAR_SKEWED,
+    SMART
 }
 
 class TestData {
@@ -314,6 +375,8 @@ class Utils {
     static final int undefined = -1;
     static final double epsilon = 1e-7;
     static final Random random = new Random();
+    static final int brute_force_limit = 10;
+    static final double infinity = 1e10;
 
     static <T> String join(String delimiter, T[] words) {
        StringBuilder sb = new StringBuilder();
@@ -399,6 +462,31 @@ class Utils {
         SmallPolygonsVis spv = new SmallPolygonsVis();
         spv.generate(seed);
         return new TestData(spv.pointsPar, spv.N);
+    }
+
+    static boolean intersect(Point a, Point b, Point c, Point d) {
+        //(b.x - a.x) * t1 + (c.x - d.x) * t2 = c.x - a.x
+        if (Math.max(a.x, b.x) + epsilon < Math.min(c.x, d.x)) return false;
+        if (Math.max(c.x, d.x) + epsilon < Math.min(a.x, b.x)) return false;
+        if (Math.max(a.y, b.y) + epsilon < Math.min(c.y, d.y)) return false;
+        if (Math.max(c.y, d.y) + epsilon < Math.min(a.y, b.y)) return false;
+        double a11 = b.x - a.x;
+        double a12 = c.x - d.x;
+        double b1 = c.x - a.x;
+        double a21 = b.y - a.y;
+        double a22 = c.y - d.y;
+        double b2 = c.y - a.y;
+        double determinant = det(a11, a12, a21, a22);
+        if (Math.abs(determinant) < epsilon) {
+            return true;
+        }
+        double t1 = det(b1, a12, b2, a22) / determinant;
+        double t2 = det(a11, b1, a21, b2) / determinant;
+        return (epsilon < t1 && t1 < 1 - epsilon) || (epsilon < t2 && t2 < 1 - epsilon);
+    }
+
+    static double det(double a11, double a12, double a21, double a22) {
+        return a11 * a22 - a12 * a21;
     }
 }
 
