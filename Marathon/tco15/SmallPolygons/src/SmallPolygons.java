@@ -12,15 +12,15 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class SmallPolygons {
-    final boolean improve;
-    Polygon bruteForceBestPolygon;
-    double bruteForceBestPolygonArea;
+    private final static SimplePolygonizationBuilder polyBuilder = new SimplePolygonizationBuilder();
+    private final Set<ConstructionStrategy> strategies;
 
     public SmallPolygons() {
-        this(true);
+        this(EnumSet.allOf(ConstructionStrategy.class));
     }
-    public SmallPolygons(boolean improve) {
-        this.improve = improve;
+
+    public SmallPolygons(Set<ConstructionStrategy> strategies) {
+        this.strategies = strategies;
     }
 
     public String[] choosePolygons(int[] coordinates, int maxNumPolygonsAllowed) {
@@ -44,8 +44,7 @@ public class SmallPolygons {
     private List<Polygon> choosePolygonsImpl(Point[] points, int maxPolygons) {
         List<Polygon> res = new ArrayList<>();
         List<Point[]> groups = split(points, maxPolygons);
-        ConstructionStrategy strategy = improve ? ConstructionStrategy.IMPROVE_TWO : ConstructionStrategy.IMPROVE_ONE;
-        res.addAll(groups.stream().map(group -> construct(group, strategy)).collect(Collectors.toList()));
+        res.addAll(groups.stream().map(group -> polyBuilder.build(group, strategies)).collect(Collectors.toList()));
         return res;
     }
 
@@ -139,100 +138,6 @@ public class SmallPolygons {
         return res;
     }
 
-    Polygon construct(Point[] points, ConstructionStrategy strategy) throws IllegalArgumentException {
-        Polygon convexHull = Polygon.convexHull(points);
-        if (convexHull.square() < Utils.epsilon) {
-            throw new IllegalArgumentException("Cannot construct 0 area polygon");
-        }
-        Point center = convexHull.center();
-        if (strategy == ConstructionStrategy.STAR) {
-            Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
-            Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
-            return new Polygon(shiftedPoints);
-        } else if (strategy == ConstructionStrategy.STAR_SKEWED) {
-            Polygon bestPolygon = construct(points, ConstructionStrategy.STAR);
-            double bestArea = bestPolygon.square();
-            for (Point candidate : points) {
-                double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
-                Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
-                Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
-                Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
-                Polygon candidatePolygon = new Polygon(shiftedPoints);
-                double area = candidatePolygon.square();
-                if (area < bestArea) {
-                    bestArea = area;
-                    bestPolygon = candidatePolygon;
-                }
-            }
-            return bestPolygon;
-        } else if (strategy == ConstructionStrategy.IMPROVE_ONE) {
-            Polygon bestPolygon = construct(points, ConstructionStrategy.STAR_SKEWED);
-            double bestArea = bestPolygon.square();
-            if (points.length < Utils.brute_force_limit) {
-                Polygon candidate = bruteForce(points);
-                if (candidate != null && bestArea > candidate.square()) {
-                    bestPolygon = candidate;
-                }
-            }
-            return bestPolygon;
-        } else if (strategy == ConstructionStrategy.IMPROVE_TWO) {
-            Polygon bestPolygon = construct(points, ConstructionStrategy.IMPROVE_ONE);
-            double bestArea = bestPolygon.square();
-            //TODO
-            return bestPolygon;
-        } else {
-            return null;
-        }
-    }
-
-    Polygon bruteForce(Point[] points) {
-        Point[] res = new Point[points.length];
-        res[0] = points[0];
-        bruteForceBestPolygon = null;
-        bruteForceBestPolygonArea = Utils.infinity;
-        boolean[] taken = new boolean[points.length];
-        taken[0] = true;
-        bruteForceRec(res, 1, points, taken);
-        return bruteForceBestPolygon;
-    }
-
-    void bruteForceRec(Point[] res, int i, Point[] points, boolean[] taken) {
-        if (i == res.length) {
-            boolean ok = true;
-            for (int k = 1; k < i; ++k) {
-                if (Utils.intersect(res[k - 1], res[k], res[i - 1], res[0])) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (!ok) return;
-            Polygon candidate = new Polygon(res);
-            double area = candidate.square();
-            if (area < bruteForceBestPolygonArea) {
-                bruteForceBestPolygonArea = area;
-                bruteForceBestPolygon = candidate;
-            }
-            return;
-        }
-        for (int j = 0; j < points.length; ++j) {
-            if (!taken[j]) {
-                boolean ok = true;
-                for (int k = 1; k < i; ++k) {
-                    if (Utils.intersect(res[k - 1], res[k], res[i - 1], points[j])) {
-                        ok = false;
-                        break;
-                    }
-                }
-                if (ok) {
-                    taken[j] = true;
-                    res[i] = points[j];
-                    bruteForceRec(res, i + 1, points, taken);
-                    taken[j] = false;
-                }
-            }
-        }
-    }
-
     static TestData readData(boolean generate, Scanner in) {
         if (generate) {
             return Utils.generate(in.next());
@@ -248,11 +153,16 @@ public class SmallPolygons {
     }
 
     public static void main(String[] args) {
-        boolean improve = args.length > 0 && "improve".equals(args[0]);
+        Set<ConstructionStrategy> strategies;
+        if (args.length > 0 && "improve".equals(args[0])) {
+            strategies = EnumSet.allOf(ConstructionStrategy.class);
+        } else {
+            strategies = EnumSet.of(ConstructionStrategy.STAR, ConstructionStrategy.STAR_SKEWED, ConstructionStrategy.BRUTE_IF_SMALL);
+        }
         boolean generate = args.length > 1 && "generate".equals(args[1]);
         Scanner in = new Scanner(System.in);
         TestData testData = readData(generate, in);
-        SmallPolygons solver = new SmallPolygons(improve);
+        SmallPolygons solver = new SmallPolygons(strategies);
         String[] serializedPolygons = solver.choosePolygons(testData.coordinates, testData.maxPolygons);
         System.out.println(serializedPolygons.length);
         for (String line : serializedPolygons) {
@@ -262,11 +172,111 @@ public class SmallPolygons {
     }
 }
 
+class BruteForcer {
+    Polygon run(Point[] points) {
+        PolygonHolder polygonHolder = new PolygonHolder();
+        Point[] res = new Point[points.length];
+        res[0] = points[0];
+        boolean[] taken = new boolean[points.length];
+        taken[0] = true;
+        runImpl(res, 1, points, taken, polygonHolder);
+        return polygonHolder.getPolygon();
+    }
+
+    private void runImpl(Point[] res, int i, Point[] points, boolean[] taken, PolygonHolder polygonHolder) {
+        if (i == res.length) {
+            boolean ok = true;
+            for (int k = 1; k < i; ++k) {
+                if (Utils.intersect(res[k - 1], res[k], res[i - 1], res[0])) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                polygonHolder.update(new Polygon(res));
+            }
+            return;
+        }
+        for (int j = 0; j < points.length; ++j) {
+            if (!taken[j]) {
+                boolean ok = true;
+                for (int k = 1; k < i; ++k) {
+                    if (Utils.intersect(res[k - 1], res[k], res[i - 1], points[j])) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) {
+                    taken[j] = true;
+                    res[i] = points[j];
+                    runImpl(res, i + 1, points, taken, polygonHolder);
+                    taken[j] = false;
+                }
+            }
+        }
+    }
+}
+
+class PolygonHolder {
+    private Polygon best;
+    private double bestArea = Utils.infinity;
+    void update(Polygon candidate) {
+        if (candidate != null) {
+            double area = candidate.square();
+            if (area < bestArea) {
+                bestArea = area;
+                best = candidate;
+            }
+        }
+    }
+    double getArea() { return bestArea; }
+    Polygon getPolygon() { return best; }
+}
+
+class SimplePolygonizationBuilder {
+    private static final BruteForcer bruteForcer = new BruteForcer();
+    Polygon build(Point[] points, Set<ConstructionStrategy> strategies) throws IllegalArgumentException {
+        Polygon convexHull = Polygon.convexHull(points);
+        if (convexHull.square() < Utils.epsilon) {
+            throw new IllegalArgumentException("Cannot construct 0 area polygon");
+        }
+        PolygonHolder polygonHolder = new PolygonHolder();
+        Point center = convexHull.center();
+        if (strategies.contains(ConstructionStrategy.STAR)) {
+            Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
+            Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
+            polygonHolder.update(new Polygon(shiftedPoints));
+        }
+        if (strategies.contains(ConstructionStrategy.STAR_SKEWED)) {
+            for (Point candidate : points) {
+                double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
+                Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
+                Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
+                Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
+                polygonHolder.update(new Polygon(shiftedPoints));
+            }
+        }
+        if (strategies.contains(ConstructionStrategy.BRUTE_IF_SMALL)) {
+            if (points.length < Utils.brute_force_limit) {
+                polygonHolder.update(bruteForcer.run(points));
+            }
+        }
+        if (strategies.contains(ConstructionStrategy.A1)) {
+        }
+        return polygonHolder.getPolygon();
+    }
+}
+
 enum ConstructionStrategy {
     STAR,
     STAR_SKEWED,
-    IMPROVE_ONE,
-    IMPROVE_TWO
+    BRUTE_IF_SMALL,
+    A1,
+    A2,
+    A3,
+    A4,
+    A5,
+    A6
 }
 
 class TestData {
