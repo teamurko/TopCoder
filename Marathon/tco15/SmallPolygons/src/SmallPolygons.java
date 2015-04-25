@@ -14,6 +14,9 @@ import java.util.stream.Collectors;
 public class SmallPolygons {
     final boolean improve;
 
+    public SmallPolygons() {
+        this(true);
+    }
     public SmallPolygons(boolean improve) {
         this.improve = improve;
     }
@@ -673,103 +676,6 @@ class SmallPolygonsVis {
             score += area(polys[i], polysVert[i]);
         return score;
     }
-    // ---------------------------------------------------
-    public double runTest(String seed) {
-        try {
-            int i, j;
-            generate(seed);
-            //init variables
-            used = new int[NP];
-            Arrays.fill(used, -2);
-            badEdges.clear();
-
-            // allow combining two modes - program output and manual correction
-            if (proc != null) {
-                // get the return and parse it into the polygons
-                String[] ret;
-                try { ret = choosePolygons(pointsPar, N); }
-                catch (Exception e) {
-                    addFatalError("Failed to get result from choosePolygons.");
-                    return 0;
-                }
-                // each string represents one polygon: number of vertices, indices of the vertices in original array
-                Npoly = ret.length;
-                // if there will be manual play, add slots for more polygons for future
-                int n = Npoly;
-                if (manual)
-                    n = Math.max(n, N);
-                polys = new int[n][];
-                polysVert = new int[n];
-                valid = new boolean[n];
-                for (i = 0; i < Npoly; ++i) {
-                    // parse the string into the polygon
-                    try {
-                        if (debug) System.out.println(ret[i]);
-                        String[] st = ret[i].split(" ");
-                        int nv = st.length;        // number of vertices in this polygon
-                        // if there will be manual play, add slots for more vertices for each polygon
-                        if (manual)
-                            polys[i] = new int[Math.max(nv, NP)];
-                        else
-                            polys[i] = new int[nv];
-                        polysVert[i] = nv;
-                        for (j = 0; j < nv; ++j) {
-                            polys[i][j] = Integer.parseInt(st[j]);
-                            // check whether this point already was used
-                            if (used[polys[i][j]] > -2) {
-                                addFatalError("Polygon " + i + " reuses point " + polys[i][j] + ".");
-                                return 0;
-                            }
-                            else
-                                used[polys[i][j]] = i;
-                        }
-                    } catch (Exception e) {
-                        addFatalError("Polygon " + i + " parses with errors.");
-                        return 0;
-                    }
-                    // validate this polygon
-                    String valRes = validatePoly(polys[i], polysVert[i]);
-                    if (valRes.length() != 0) {
-                        addFatalError("Polygon " + i + " is invalid: " + valRes);
-                        valid[i] = false;
-                    }
-                    else
-                        valid[i] = true;
-                }
-            }
-            else {
-                // no polygons initially
-                Npoly = 0;
-                polys = new int[N][];
-                polysVert = new int[N];
-                valid = new boolean[N];
-            }
-
-            if (vis) {
-                // draw the image
-                jf.setSize(SZX+17,SZY+37);
-                jf.setVisible(true);
-                draw();
-            }
-
-            if (manual) {
-                ready = false;
-                Pcur = new int[2000];
-                Ncur = 0;
-                // wait for the result of manual polygons adjustments - validation will be done there
-                while (!ready)
-                    try { Thread.sleep(1000);}
-                    catch (Exception e) { e.printStackTrace(); }
-            }
-
-            return calcScore();
-        }
-        catch (Exception e) {
-            addFatalError("An exception occurred while trying to process your program's results.");
-            e.printStackTrace();
-            return 0.0;
-        }
-    }
     // ------------- visualization part ----------------------
     static String exec;
     static boolean vis, manual, debug, strict;
@@ -1035,75 +941,9 @@ class SmallPolygonsVis {
     }
 
     public SmallPolygonsVis() {}
-    // ---------------------------------------------------
-    public SmallPolygonsVis(String seed) {
-        //interface for runTest
-        if (vis)
-        {   jf = new JFrame();
-            v = new Vis();
-            jf.getContentPane().add(v);
-        }
-        if (exec != null) {
-            try {
-                Runtime rt = Runtime.getRuntime();
-                proc = rt.exec(exec);
-                os = proc.getOutputStream();
-                is = proc.getInputStream();
-                br = new BufferedReader(new InputStreamReader(is));
-                new ErrorReader(proc.getErrorStream()).start();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-        System.out.println("Score = "+runTest(seed));
-        if (proc != null)
-            try { proc.destroy(); }
-            catch (Exception e) { e.printStackTrace(); }
-    }
-    // ---------------------------------------------------
-    public static void main(String[] args) {
-        String seed = "1";
-        vis = false;
-        manual = false;
-        strict = true;
-        for (int i = 0; i<args.length; i++)
-        {   if (args[i].equals("-seed"))
-            seed = args[++i];
-            if (args[i].equals("-exec"))
-                exec = args[++i];
-            if (args[i].equals("-vis"))
-                vis = true;
-            if (args[i].equals("-manual"))
-                manual = true;
-            if (args[i].equals("-debug"))
-                debug = true;
-            if (args[i].equals("-nostrict"))
-                strict = false;
-        }
-        if (manual)
-            vis = true;
-        SmallPolygonsVis f = new SmallPolygonsVis(seed);
-    }
-    // ---------------------------------------------------
+
     void addFatalError(String message) {
         System.out.println(message);
     }
 }
 
-class ErrorReader extends Thread{
-    InputStream error;
-    public ErrorReader(InputStream is) {
-        error = is;
-    }
-    public void run() {
-        try {
-            byte[] ch = new byte[50000];
-            int read;
-            while ((read = error.read(ch)) > 0)
-            {   String s = new String(ch,0,read);
-                System.out.print(s);
-                System.out.flush();
-            }
-        } catch(Exception e) { }
-    }
-}
