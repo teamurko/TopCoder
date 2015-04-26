@@ -26,6 +26,7 @@ public class SmallPolygons {
     }
 
     public String[] choosePolygons(int[] coordinates, int maxNumPolygonsAllowed) {
+        Utils.timer = new Timer();
         Point[] points = new Point[coordinates.length / 2];
         for (int i = 0; i < coordinates.length; i += 2) {
             int pointId = i / 2;
@@ -149,7 +150,10 @@ public class SmallPolygons {
                     ConstructionStrategy.STAR,
                     ConstructionStrategy.STAR_SKEWED,
                     ConstructionStrategy.TRY_BRUTE_FORCE,
-                    ConstructionStrategy.A1);
+                    ConstructionStrategy.A1,
+                    ConstructionStrategy.A2,
+                    ConstructionStrategy.A3,
+                    ConstructionStrategy.A4);
         }
         boolean generate = args.length > 1 && "generate".equals(args[1]);
         Scanner in = new Scanner(System.in);
@@ -452,15 +456,25 @@ class Polygon {
     }
 }
 
+class Timer {
+    private static final long timeLimit = 10000; //ms
+    private static final long waitTimeLimit = 2000; //ms
+    private long startTime;
+    Timer() { startTime = System.nanoTime(); }
+    boolean hasTime() {
+        return (System.nanoTime() - startTime) / 1000000 < timeLimit - waitTimeLimit;
+    }
+}
 class Utils {
     static final int undefined = -1;
     static final double epsilon = 1e-7;
     static final Random random = new Random(123);
     static final double infinity = 1e10;
     static final int brute_force_limit = 10;
-    static int random_search_limit = 200;
+    static int random_search_limit = 500;
 
     private static final BruteForcer bruteForcer = new BruteForcer();
+    static Timer timer;
 
     static <T> String join(String delimiter, T[] words) {
        StringBuilder sb = new StringBuilder();
@@ -747,11 +761,13 @@ class Utils {
 
     static void addConstructors(Map<ConstructionStrategy, PolygonConstructor> strategyToConstructor) {
         strategyToConstructor.put(ConstructionStrategy.STAR, points -> {
+            if (!Utils.timer.hasTime()) return null;
             Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
             Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
             return new Polygon(shiftedPoints);
         });
         strategyToConstructor.put(ConstructionStrategy.STAR_SKEWED, points -> {
+            if (!Utils.timer.hasTime()) return null;
             PolygonHolder polygonHolder = new PolygonHolder();
             Point center = Utils.center(points);
             for (Point candidate : points) {
@@ -764,11 +780,11 @@ class Utils {
             return polygonHolder.getPolygon();
         });
         strategyToConstructor.put(ConstructionStrategy.TRY_BRUTE_FORCE, points -> {
-            if (points.length > Utils.brute_force_limit) return null;
+            if (points.length > Utils.brute_force_limit || !Utils.timer.hasTime()) return null;
             return bruteForcer.run(points);
         });
         strategyToConstructor.put(ConstructionStrategy.A1, points -> {
-            boolean pass = points.length > Utils.random_search_limit;
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
             if (pass) return null;
             Point[] initialTriangle = randomGreedyTriangle(points);
             List<Point> vertices = new ArrayList<>(3);
@@ -800,7 +816,7 @@ class Utils {
             return new Polygon(vertices);
         });
         strategyToConstructor.put(ConstructionStrategy.A2, points -> {
-            boolean pass = points.length > Utils.random_search_limit;
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
             if (pass) return null;
             Point[] initialTriangle = randomGreedyTriangle(points);
             List<Point> vertices = new ArrayList<>(3);
@@ -833,7 +849,7 @@ class Utils {
             return new Polygon(vertices);
         });
         strategyToConstructor.put(ConstructionStrategy.A3, points -> {
-            boolean pass = points.length > Utils.random_search_limit;
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
             if (pass) return null;
             Point[] initialTriangle = randomGreedyTriangle(points);
             List<Point> vertices = new ArrayList<>(3);
@@ -867,9 +883,42 @@ class Utils {
             return new Polygon(vertices);
         });
         strategyToConstructor.put(ConstructionStrategy.A4, points -> {
-            boolean pass = points.length > Utils.random_search_limit;
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
             if (pass) return null;
-            Point[] initialTriangle = randomGreedyTriangle(points);
+            Point[] initialTriangle = randomTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                if (feasiblePoints.length == 0) return null;
+                Point p = closest(feasiblePoints, vertices);
+                if (p == null) return null;
+                int edge = greedyEdge(vertices, p) + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A5, points -> {
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
+            if (pass) return null;
+            Point[] initialTriangle = randomTriangle(points);
             List<Point> vertices = new ArrayList<>(3);
             for (Point p : initialTriangle) vertices.add(p);
             Point[] pts = new Point[points.length - 3];
@@ -884,7 +933,42 @@ class Utils {
                 Point[] feasiblePoints = feasiblePoints(vertices, pts);
                 if (feasiblePoints.length == 0) return null;
                 Point p = randomPoint(feasiblePoints);
+                if (p == null) return null;
                 int edge = greedyEdge(vertices, p) + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A6, points -> {
+            boolean pass = points.length > Utils.random_search_limit || !Utils.timer.hasTime();
+            if (pass) return null;
+            Point[] initialTriangle = randomTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                if (feasiblePoints.length == 0) return null;
+                Pair<Integer, Integer> t = greedyArea(vertices, feasiblePoints);
+                if (t.getValue() == Utils.undefined || t.getKey() == Utils.undefined) return null;
+                Point p = feasiblePoints[t.getValue()];
+                int edge = t.getKey() + 1;
                 if (edge == vertices.size()) edge = 0;
                 vertices.add(edge, p);
                 for (i = 0; i + 1 < pts.length; ++i) {
