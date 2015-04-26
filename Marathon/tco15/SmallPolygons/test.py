@@ -42,13 +42,18 @@ class StatResult(object):
 
 class Tester(object):
     CMD_TEMPLATE = "java -cp /home/stanislav/Documents/Code/Contests/TopCoder/Marathon/tco15/SmallPolygons/out/production/SmallPolygons/ SmallPolygons {0}"
-    def __init__(self, vis=False, tag="baseline"):
+    def __init__(self, vis=False, tag="baseline", debug=False):
         self.vis = vis
         self.tag = tag
+        self.debug = debug
         self.cmd = self.CMD_TEMPLATE.format(tag)
 
     def run(self, seed):
-        cmd_line = "java -jar tester.jar -exec \"{0}\" -seed {1} {2}".format(self.cmd, seed, "-vis" if self.vis else "")
+        cmd_line = "java -jar tester.jar -exec \"{0}\" -seed {1} {2} {3}".format(
+                    self.cmd,
+                    seed,
+                    "-vis" if self.vis else "",
+                    "-manual -debug" if self.debug else "")
         print cmd_line
         args = shlex.split(cmd_line)
         res = subprocess.Popen(args, stdout=subprocess.PIPE)
@@ -57,9 +62,9 @@ class Tester(object):
         return StatResult.parse(self.tag, res.stdout)        
 
 
-def main(tag, seed):
+def main(tag, debug, seed):
     if seed is not None:
-        tester = Tester(vis=True, tag=tag)
+        tester = Tester(vis=True, tag=tag, debug=debug)
         stat_res = tester.run(seed)
         print stat_res
     else:
@@ -73,4 +78,7 @@ def main(tag, seed):
         print score / num_tests
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "baseline", int(sys.argv[2]) if len(sys.argv) > 2 else None)
+    main(
+        sys.argv[1] if len(sys.argv) > 1 else "baseline",
+        "debug" == sys.argv[2] if len(sys.argv) > 2 else False,
+        int(sys.argv[3]) if len(sys.argv) > 3 else None)

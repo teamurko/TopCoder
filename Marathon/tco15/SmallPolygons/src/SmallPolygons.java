@@ -1,3 +1,5 @@
+import javafx.util.Pair;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -50,7 +52,7 @@ public class SmallPolygons {
 
     private List<Point[]> split(Point[] points, int maxGroups) {
         maxGroups = Math.min(maxGroups, points.length / 3);
-        Point[] centers = choose(points.clone(), maxGroups);
+        Point[] centers = Utils.choose(points, maxGroups);
         boolean updated = true;
         for (int iter = 0; iter < 200 && updated; ++iter) {
             List<Point>[] groups = distribute(points, centers);
@@ -124,20 +126,6 @@ public class SmallPolygons {
         return res;
     }
 
-    static Point[] choose(Point[] points, int numPoints) {
-        Point[] res = new Point[numPoints];
-        int ptr = 0;
-        while (numPoints > 0) {
-            int i = Utils.random.nextInt(numPoints);
-            res[ptr++] = points[i];
-            Point t = points[numPoints - 1];
-            points[numPoints - 1] = points[i];
-            points[i] = t;
-            --numPoints;
-        }
-        return res;
-    }
-
     static TestData readData(boolean generate, Scanner in) {
         if (generate) {
             return Utils.generate(in.next());
@@ -157,7 +145,11 @@ public class SmallPolygons {
         if (args.length > 0 && "improve".equals(args[0])) {
             strategies = EnumSet.allOf(ConstructionStrategy.class);
         } else {
-            strategies = EnumSet.of(ConstructionStrategy.STAR, ConstructionStrategy.STAR_SKEWED, ConstructionStrategy.BRUTE_IF_SMALL);
+            strategies = EnumSet.of(
+                    ConstructionStrategy.STAR,
+                    ConstructionStrategy.STAR_SKEWED,
+                    ConstructionStrategy.TRY_BRUTE_FORCE,
+                    ConstructionStrategy.A1);
         }
         boolean generate = args.length > 1 && "generate".equals(args[1]);
         Scanner in = new Scanner(System.in);
@@ -222,7 +214,7 @@ class PolygonHolder {
     private double bestArea = Utils.infinity;
     void update(Polygon candidate) {
         if (candidate != null) {
-            double area = candidate.square();
+            double area = candidate.area();
             if (area < bestArea) {
                 bestArea = area;
                 best = candidate;
@@ -233,36 +225,24 @@ class PolygonHolder {
     Polygon getPolygon() { return best; }
 }
 
+interface PolygonConstructor {
+    Polygon build(Point[] points);
+}
+
 class SimplePolygonizationBuilder {
-    private static final BruteForcer bruteForcer = new BruteForcer();
+    private static final Map<ConstructionStrategy, PolygonConstructor> strategyToConstructor = new HashMap<>();
+    static {
+        Utils.addConstructors(strategyToConstructor);
+    }
     Polygon build(Point[] points, Set<ConstructionStrategy> strategies) throws IllegalArgumentException {
         Polygon convexHull = Polygon.convexHull(points);
-        if (convexHull.square() < Utils.epsilon) {
+        if (convexHull.area() < Utils.epsilon) {
             throw new IllegalArgumentException("Cannot construct 0 area polygon");
         }
         PolygonHolder polygonHolder = new PolygonHolder();
-        Point center = convexHull.center();
-        if (strategies.contains(ConstructionStrategy.STAR)) {
-            Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
-            Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
-            polygonHolder.update(new Polygon(shiftedPoints));
-        }
-        if (strategies.contains(ConstructionStrategy.STAR_SKEWED)) {
-            for (Point candidate : points) {
-                double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
-                Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
-                Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
-                Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
-                polygonHolder.update(new Polygon(shiftedPoints));
-            }
-        }
-        if (strategies.contains(ConstructionStrategy.BRUTE_IF_SMALL)) {
-            if (points.length < Utils.brute_force_limit) {
-                polygonHolder.update(bruteForcer.run(points));
-            }
-        }
-        if (strategies.contains(ConstructionStrategy.A1)) {
-        }
+        strategyToConstructor.entrySet().stream().filter(
+                entry -> strategies.contains(entry.getKey())).forEach(
+                    entry -> polygonHolder.update(entry.getValue().build(points)));
         return polygonHolder.getPolygon();
     }
 }
@@ -270,7 +250,7 @@ class SimplePolygonizationBuilder {
 enum ConstructionStrategy {
     STAR,
     STAR_SKEWED,
-    BRUTE_IF_SMALL,
+    TRY_BRUTE_FORCE,
     A1,
     A2,
     A3,
@@ -307,6 +287,15 @@ class Point {
     double distanceTo(Point p) {
         return Math.hypot(p.x - x, p.y - y);
     }
+
+    double distanceTo(Point a, Point b) {
+        double A = -(a.x - x) * (b.x - a.x) - (a.y - y) * (b.y - a.y);
+        double t = A / ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
+        if (0 < t && t < 1) {
+            return distanceTo(new Point(Utils.undefined, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+        }
+        return Math.min(a.distanceTo(this), b.distanceTo(this));
+    }
 }
 
 class DisjointSetUnion {
@@ -334,11 +323,17 @@ class DisjointSetUnion {
         }
     }
 }
+
 class Polygon {
     final Point[] vertices;
 
     Polygon(Point...points) {
         this.vertices = points.clone();
+    }
+
+    Polygon(List<Point> points) {
+        vertices = new Point[points.size()];
+        points.toArray(vertices);
     }
 
     String serialized() {
@@ -363,12 +358,29 @@ class Polygon {
         return new Point(Utils.undefined, sx / vertices.length, sy / vertices.length);
     }
 
-    double square() {
+    double area() {
         double sum = 0;
         for (int i = 1; i < vertices.length; i++)
             sum += (vertices[i].x - vertices[i - 1].x) * (vertices[i].y + vertices[i - 1].y);
         sum += (vertices[0].x - vertices[vertices.length - 1].x) * (vertices[0].y + vertices[vertices.length - 1].y);
         return Math.abs(sum) / 2;
+    }
+
+    boolean contains(Point point, boolean strict) {
+        for (int i = 0; i < vertices.length; ++i) {
+            int j = i + 1;
+            if (j == vertices.length) j = 0;
+            int sign = Utils.vectProductSign(point, vertices[i], vertices[j]);
+            if (sign < 0) return false;
+            if (sign == 0 && strict) return false;
+        }
+        return true;
+    }
+
+    static Polygon convexHull(List<Point> points) {
+        Point[] pts = new Point[points.size()];
+        points.toArray(pts);
+        return convexHull(pts);
     }
 
     static Polygon convexHull(Point[] points) {
@@ -407,14 +419,48 @@ class Polygon {
         Utils.reverse(result);
         return new Polygon(result);
     }
+
+    Polygon extendConvexHull(Point p) {
+        List<Point> res = new ArrayList<>();
+        for (int i = 0; i < vertices.length; ++i) {
+            int j = i - 1;
+            if (j < 0) j = vertices.length - 1;
+            int k = i + 1;
+            if (k == vertices.length) k = 0;
+            if (Utils.vectProductSign(p, vertices[j], vertices[i]) >= 0 || Utils.vectProductSign(p, vertices[i], vertices[k]) >= 0) {
+                res.add(vertices[i]);
+            }
+        }
+        for (int i = 0; i < res.size(); ++i) {
+            int j = i + 1;
+            if (j == res.size()) j = 0;
+            if (Utils.vectProductSign(p, vertices[i], vertices[j]) < 0) {
+                res.add(j, p);
+                break;
+            }
+        }
+        return new Polygon(res);
+    }
+
+    boolean containsAny(Point[] points) {
+        for (Point p : points) {
+            if (contains(p, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 class Utils {
     static final int undefined = -1;
     static final double epsilon = 1e-7;
-    static final Random random = new Random();
-    static final int brute_force_limit = 10;
+    static final Random random = new Random(123);
     static final double infinity = 1e10;
+    static final int brute_force_limit = 10;
+    static int random_search_limit = 200;
+
+    private static final BruteForcer bruteForcer = new BruteForcer();
 
     static <T> String join(String delimiter, T[] words) {
        StringBuilder sb = new StringBuilder();
@@ -516,15 +562,364 @@ class Utils {
         double b2 = c.y - a.y;
         double determinant = det(a11, a12, a21, a22);
         if (Math.abs(determinant) < epsilon) {
-            return true;
+            return vectProductSign(a, b, c) == 0;
         }
         double t1 = det(b1, a12, b2, a22) / determinant;
         double t2 = det(a11, b1, a21, b2) / determinant;
+        if (t1 < -epsilon || t1 > 1 + epsilon || t2 < -epsilon || t2 > 1 + epsilon) return false;
         return (epsilon < t1 && t1 < 1 - epsilon) || (epsilon < t2 && t2 < 1 - epsilon);
     }
 
     static double det(double a11, double a12, double a21, double a22) {
         return a11 * a22 - a12 * a21;
+    }
+
+    static double canonicalAngle(double angle) {
+        while (angle > Math.PI)
+            angle -= 2 * Math.PI;
+        while (angle < -Math.PI)
+            angle += 2 * Math.PI;
+        return angle;
+    }
+
+    static Point[] choose(Point[] pts, int numPoints) {
+        Point[] points = pts.clone();
+        Point[] res = new Point[numPoints];
+        int ptr = 0;
+        while (numPoints > 0) {
+            int i = Utils.random.nextInt(numPoints);
+            res[ptr++] = points[i];
+            Point t = points[numPoints - 1];
+            points[numPoints - 1] = points[i];
+            points[i] = t;
+            --numPoints;
+        }
+        return res;
+    }
+
+    static Point[] randomTriangle(Point[] points) {
+        if (points.length < 3) {
+            throw new IllegalArgumentException("Not enough points to construct triangle");
+        }
+        Point[] res = choose(points, 3);
+        if (vectProductSign(res[0], res[1], res[2]) < 0) {
+            reverse(res);
+        }
+        return res;
+    }
+
+    static Point[] randomGreedyTriangle(Point[] points) {
+        if (points.length < 3) {
+            throw new IllegalArgumentException("Not enough points to construct triangle");
+        }
+        Point o = points[Utils.random.nextInt(points.length)];
+        Point a = null;
+        Point b = null;
+        for (Point p : points) {
+            if (p != o) {
+                if (a == null) {
+                    a = p;
+                    continue;
+                }
+                if (a.distanceTo(o) > p.distanceTo(o)) {
+                    b = a;
+                    a = p;
+                } else {
+                    if (b == null || b.distanceTo(o) > p.distanceTo(o)) {
+                        b = p;
+                    }
+                }
+            }
+        }
+        if (vectProductSign(o, a, b) < 0) {
+            return new Point[]{o, b, a};
+        }
+        return new Point[]{o, a, b};
+    }
+
+    static Point randomPoint(Point[] points) {
+        return points[Utils.random.nextInt(points.length)];
+    }
+
+    static double area(Point a, Point b, Point c) {
+        return Math.abs(det(b.x - a.x, b.y - a.y, c.x - a.x, c.y - a.y));
+    }
+
+    static Point[] feasiblePoints(List<Point> vertices, Point[] points) {
+        Polygon convexHull = Polygon.convexHull(vertices);
+        List<Point> res = new ArrayList<>();
+        for (Point point : points) {
+            Polygon ech = convexHull.extendConvexHull(point);
+            boolean contains = false;
+            for (Point p : points) {
+                if (p == point) continue;
+                if (ech.contains(p, true)) {
+                    contains = true;
+                }
+            }
+            if (!contains) {
+                res.add(point);
+            }
+        }
+        Point[] pts = new Point[res.size()];
+        res.toArray(pts);
+        return pts;
+    }
+
+    static List<Integer> visibleEdges(List<Point> vertices, Point point) {
+        List<Integer> res = new ArrayList<>();
+        boolean[] visible = new boolean[vertices.size()];
+        for (int i = 0; i < vertices.size(); ++i) {
+            if (!intersectAny(point, vertices.get(i), vertices)) {
+                visible[i] = true;
+            }
+        }
+        for (int i = 0; i < vertices.size(); ++i) {
+            int j = i + 1;
+            if (j == vertices.size()) j = 0;
+            if (visible[i] && visible[j]) {
+                res.add(i);
+            }
+        }
+        return res;
+    }
+
+    static boolean intersectAny(Point a, Point b, List<Point> vertices) {
+        if (intersect(a, b, vertices.get(0), vertices.get(vertices.size() - 1))) return true;
+        for (int i = 0; i + 1 < vertices.size(); ++i) {
+            if (intersect(a, b, vertices.get(i), vertices.get(i + 1))) return true;
+        }
+        return false;
+    }
+
+    static int greedyEdge(List<Point> vertices, Point point) {
+        int res = Utils.undefined;
+        double area = Utils.infinity;
+        for (int i : visibleEdges(vertices, point)) {
+            int j = i + 1;
+            if (j == vertices.size()) j = 0;
+            double a = area(point, vertices.get(i), vertices.get(j));
+            if (a > epsilon && area > a) {
+                area = a;
+                res = i;
+            }
+        }
+        return res;
+    }
+
+    static Pair<Integer, Integer> greedyArea(List<Point> vertices, Point[] feasiblePoints) {
+        int resSegment = Utils.undefined;
+        int resPoint = Utils.undefined;
+        double area = Utils.infinity;
+        for (int i = 0; i < feasiblePoints.length; ++i) {
+            int candidate = greedyEdge(vertices, feasiblePoints[i]);
+            if (candidate == Utils.undefined) continue;
+            double a = area(feasiblePoints[i], vertices.get(candidate), vertices.get((candidate + 1) % vertices.size()));
+            if (a > epsilon && a < area) {
+                area = a;
+                resPoint = i;
+                resSegment = candidate;
+            }
+        }
+        return new Pair<>(resSegment, resPoint);
+    }
+
+    static double distanceToPolygon(List<Point> vertices, Point point) {
+        double res = Utils.infinity;
+        for (int i = 0; i < vertices.size(); ++i) {
+            res = Math.min(res, point.distanceTo(vertices.get(i), vertices.get((i + 1) % vertices.size())));
+        }
+        return res;
+    }
+
+    static Point closest(Point[] points, List<Point> vertices) {
+        double dist = Utils.infinity;
+        Point res = null;
+        for (Point p : points) {
+            double dst = distanceToPolygon(vertices, p);
+            if (res == null || dst < dist) {
+                dist = dst;
+                res = p;
+            }
+        }
+        return res;
+    }
+
+    static void addConstructors(Map<ConstructionStrategy, PolygonConstructor> strategyToConstructor) {
+        strategyToConstructor.put(ConstructionStrategy.STAR, points -> {
+            Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
+            Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
+            return new Polygon(shiftedPoints);
+        });
+        strategyToConstructor.put(ConstructionStrategy.STAR_SKEWED, points -> {
+            PolygonHolder polygonHolder = new PolygonHolder();
+            Point center = Utils.center(points);
+            for (Point candidate : points) {
+                double length = Math.hypot(center.x - candidate.x, center.y - candidate.y);
+                Point skewedCenter = candidate.shifted((center.x - candidate.x) / length, (center.y - candidate.y) / length);
+                Point[] shiftedPoints = Utils.shiftedBy(points, skewedCenter);
+                Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
+                polygonHolder.update(new Polygon(shiftedPoints));
+            }
+            return polygonHolder.getPolygon();
+        });
+        strategyToConstructor.put(ConstructionStrategy.TRY_BRUTE_FORCE, points -> {
+            if (points.length > Utils.brute_force_limit) return null;
+            return bruteForcer.run(points);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A1, points -> {
+            boolean pass = points.length > Utils.random_search_limit;
+            if (pass) return null;
+            Point[] initialTriangle = randomGreedyTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                Point p = closest(feasiblePoints, vertices);
+                if (p == null) return null;
+                int edge = greedyEdge(vertices, p) + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A2, points -> {
+            boolean pass = points.length > Utils.random_search_limit;
+            if (pass) return null;
+            Point[] initialTriangle = randomGreedyTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                if (feasiblePoints.length == 0) return null;
+                Point p = randomPoint(feasiblePoints);
+                if (p == null) return null;
+                int edge = greedyEdge(vertices, p) + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A3, points -> {
+            boolean pass = points.length > Utils.random_search_limit;
+            if (pass) return null;
+            Point[] initialTriangle = randomGreedyTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                if (feasiblePoints.length == 0) return null;
+                Pair<Integer, Integer> t = greedyArea(vertices, feasiblePoints);
+                if (t.getValue() == Utils.undefined || t.getKey() == Utils.undefined) return null;
+                Point p = feasiblePoints[t.getValue()];
+                int edge = t.getKey() + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+        strategyToConstructor.put(ConstructionStrategy.A4, points -> {
+            boolean pass = points.length > Utils.random_search_limit;
+            if (pass) return null;
+            Point[] initialTriangle = randomGreedyTriangle(points);
+            List<Point> vertices = new ArrayList<>(3);
+            for (Point p : initialTriangle) vertices.add(p);
+            Point[] pts = new Point[points.length - 3];
+            int i = 0;
+            for (Point p : points) {
+                if (!vertices.contains(p)) {
+                    pts[i++] = p;
+                }
+            }
+
+            while (pts.length > 0) {
+                Point[] feasiblePoints = feasiblePoints(vertices, pts);
+                if (feasiblePoints.length == 0) return null;
+                Point p = randomPoint(feasiblePoints);
+                int edge = greedyEdge(vertices, p) + 1;
+                if (edge == vertices.size()) edge = 0;
+                vertices.add(edge, p);
+                for (i = 0; i + 1 < pts.length; ++i) {
+                    if (pts[i] == p) {
+                        pts[i] = pts[pts.length - 1];
+                        break;
+                    }
+                }
+                pts = Arrays.copyOf(pts, pts.length - 1);
+            }
+            if (!valid(vertices)) return null;
+            return new Polygon(vertices);
+        });
+    }
+
+    static boolean valid(List<Point> vertices) {
+        for (int i = 0; i + 1 < vertices.size(); ++i) {
+            for (int j = i + 1; j < vertices.size(); ++j) {
+                int k = j + 1;
+                if (k == vertices.size()) k = 0;
+                if (intersect(vertices.get(i), vertices.get(i + 1), vertices.get(j), vertices.get(k))) return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean threePointsOnLine(Point[] points) {
+        for (int i = 0; i < points.length; ++i) {
+            for (int j = i + 1; j < points.length; ++j) {
+                for (int k = j + 1; k < points.length; ++k) {
+                    if (vectProductSign(points[i], points[j], points[k]) == 0) return true;
+                }
+            }
+        }
+        return false;
     }
 }
 
