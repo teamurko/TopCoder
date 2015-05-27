@@ -471,7 +471,7 @@ class Utils {
     static final Random random = new Random(123);
     static final double infinity = 1e10;
     static final int brute_force_limit = 10;
-    static int random_search_limit = 500;
+    static int random_search_limit = 600;
 
     private static final BruteForcer bruteForcer = new BruteForcer();
     static Timer timer;
@@ -761,7 +761,6 @@ class Utils {
 
     static void addConstructors(Map<ConstructionStrategy, PolygonConstructor> strategyToConstructor) {
         strategyToConstructor.put(ConstructionStrategy.STAR, points -> {
-            if (!Utils.timer.hasTime()) return null;
             Point[] shiftedPoints = Utils.shiftedBy(points, Utils.center(points));
             Arrays.sort(shiftedPoints, (o1, o2) -> Utils.signum(Math.atan2(o1.y, o1.x) - Math.atan2(o2.y, o2.x)));
             return new Polygon(shiftedPoints);
